@@ -180,7 +180,7 @@ asm_return_t lz_main(void)
 
 	/* DEV CODE */
 
-	pfn = PAGE_PFN(0x1000000 /*zero_page*/);
+	pfn = PAGE_PFN(zero_page);
 	end_pfn = PAGE_PFN(PAGE_DOWN((u8*)lz_base + 0x10000));
 
 	/* TODO: check end_pfn is not ouside of range of DEV map */
@@ -218,7 +218,7 @@ asm_return_t lz_main(void)
 
 	/* extend TB Loader code segment into PCR17 */
 	data = (u32*)(uintptr_t)*code32_start;
-	size = lz_header.slaunch_loader_size;
+	size = (*(u32*)((u8*)zero_page + BP_SYSSIZE)) << 4;
 
 	if (tpm->family == TPM12) {
 		sha1sum(&sha1ctx, data, size);
