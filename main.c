@@ -25,6 +25,7 @@
 #include <tpm.h>
 #include <sha1sum.h>
 #include <sha256.h>
+#include <multiboot2.h>
 
 static u8 __page_data dev_table[3 * PAGE_SIZE];
 
@@ -137,8 +138,30 @@ void hexdump(const void *memory, size_t length)
 }
 #else
 static void print(const char * unused) { }
+static void print_p(const void * unused) { }
 static void hexdump(const void *unused, size_t unused2) { }
 #endif
+
+static void extend_pcr(struct tpm *tpm, void *data, u32 size, u32 pcr)
+{
+	if (tpm->family == TPM12) {
+		u8 hash[SHA1_DIGEST_SIZE];
+
+		sha1sum(hash, data, size);
+		print("shasum calculated:\n");
+		hexdump(hash, SHA1_DIGEST_SIZE);
+		tpm_extend_pcr(tpm, pcr, TPM_HASH_ALG_SHA1, hash);
+		print("PCR extended\n");
+	} else if (tpm->family == TPM20) {
+		u8 sha256_hash[SHA256_DIGEST_SIZE];
+
+		sha256sum(sha256_hash, data, size);
+		print("shasum calculated:\n");
+		hexdump(sha256_hash, SHA256_DIGEST_SIZE);
+		tpm_extend_pcr(tpm, pcr, TPM_HASH_ALG_SHA256, &sha256_hash[0]);
+		print("PCR extended\n");
+	}
+}
 
 /*
  * Function return ABI magic:
@@ -173,7 +196,7 @@ asm_return_t lz_main(void)
 	 */
 
 	/* The Zero Page with the boot_params and legacy header */
-	zero_page = _p(lz_header.zero_page_addr);
+	zero_page = _p(lz_header.proto_struct);
 
 	/* DEV CODE */
 
@@ -216,24 +239,7 @@ asm_return_t lz_main(void)
 	/* extend TB Loader code segment into PCR17 */
 	data = (u32*)(uintptr_t)*code32_start;
 	size = (*(u32*)((u8*)zero_page + BP_SYSSIZE)) << 4;
-
-	if (tpm->family == TPM12) {
-		u8 hash[SHA1_DIGEST_SIZE];
-
-		sha1sum(hash, data, size);
-		print("shasum calculated:\n");
-		hexdump(hash, SHA1_DIGEST_SIZE);
-		tpm_extend_pcr(tpm, 17, TPM_HASH_ALG_SHA1, hash);
-		print("PCR extended\n");
-	} else if (tpm->family == TPM20) {
-		u8 sha256_hash[SHA256_DIGEST_SIZE];
-
-		sha256sum(sha256_hash, data, size);
-		print("shasum calculated:\n");
-		hexdump(sha256_hash, SHA256_DIGEST_SIZE);
-		tpm_extend_pcr(tpm, 17, TPM_HASH_ALG_SHA256, &sha256_hash[0]);
-		print("PCR extended\n");
-	}
+	extend_pcr(tpm, data, size, 17);
 
 	tpm_relinquish_locality(tpm);
 	free_tpm(tpm);
@@ -247,4 +253,58 @@ asm_return_t lz_main(void)
 	hexdump(lz_base, 0x100);
 
 	return (asm_return_t){ pm_kernel_entry, zero_page };
+}
+
+asm_return_t lz_multiboot2()
+{
+	void *kernel_entry = NULL;
+	struct tpm *tpm;
+	u32 kernel_size;
+
+	/* This is MBI header, not a tag, but their structures are similar enough.
+	 * Note that 'size' offsets are reversed in those two! */
+	struct multiboot_tag *tag = _p(lz_header.proto_struct);
+	kernel_size = tag->size;
+	tag->size = 0;
+
+	/* TODO: DEV or IOMMU, switch SLB protection off */
+
+	tpm = enable_tpm();
+	tpm_request_locality(tpm, 2);
+
+	/* Extend PCR18 with MBI structure's hash; this includes all cmdlines */
+	extend_pcr(tpm, &tag, tag->size, 18);
+
+	tag++;
+
+	while (tag->type) {
+		if (tag->type == MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR) {
+			struct multiboot_tag_load_base_addr *ba = (struct multiboot_tag_load_base_addr *)tag;
+			kernel_entry = _p(ba->load_base_addr);
+			extend_pcr(tpm, kernel_entry, kernel_size, 17);
+		}
+
+		if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
+			struct multiboot_tag_module *mod = (struct multiboot_tag_module*)tag;
+			print("Module '");
+			print(mod->cmdline);
+			print("' [");
+			print_p(_p(mod->mod_start));
+			print_p(_p(mod->mod_end));
+			print("]\n");
+			extend_pcr(tpm, _p(mod->mod_start), mod->mod_end - mod->mod_start, 17);
+		}
+
+		tag = multiboot_next_tag(tag);
+	}
+
+	tpm_relinquish_locality(tpm);
+	free_tpm(tpm);
+
+	print("lz_multiboot2 returning\n");
+
+	/* Xen sends self-NMI which would be blocked without stgi() */
+	stgi();
+
+	return (asm_return_t){ kernel_entry, _p(lz_header.proto_struct) };
 }
