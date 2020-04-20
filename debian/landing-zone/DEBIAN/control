@@ -1,0 +1,9 @@
+Package: landing-zone
+Version: 1.0
+Architecture: amd64
+Maintainer: Cezary Sobczak <cezary.sobczak@3mdeb.com>
+Installed-Size: 69
+Section: embedded
+Priority: optional
+Homepage: <insert the upstream URL, if relevant>
+Description: Landing zone measure Linux kernel and then run it.
