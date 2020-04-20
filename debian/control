@@ -1,11 +1,11 @@
 Source: landing-zone
-Section: embedded
+Section: main/embedded
 Priority: optional
-Maintainer: Cezary Sobczak <cezary.sobczak@3mdeb.com>
+Maintainer: debian <debian@3mdeb.com>
 Build-Depends: debhelper (>= 10)
 Standards-Version: 4.1.2
-Homepage: <insert the upstream URL, if relevant>
-Vcs-Git: https://github.com/3mdeb/landing-zone?organization=3mdeb&organization=3mdeb
+Homepage: https://github.com/trenchboot
+Vcs-Git: https://github.com/TrenchBoot/landing-zone
 
 Package: landing-zone
 Architecture: any
